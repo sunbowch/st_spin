@@ -15,3 +15,4 @@ class Constant:
 
     TickSeconds: Final[float]           = 250 * (10 ** -9)
     SpsToSpeed: Final[float]            = TickSeconds / (2 ** -28)
+    Sps2ToAcc: Final[float]             = TickSeconds**2 / (2**-40)

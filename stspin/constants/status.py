@@ -8,7 +8,7 @@ class Status:
     NotBusy: Final              = 0x0002  # active low
     SwitchFlag: Final           = 0x0004  # low on closed switch, high on open
     SwitchEvent: Final          = 0x0008  # high on falling edge
-    Dir: Final                  = 0x0010
+    Dir: Final                  = 0x0010  # reverse low
     CmdNotPerformed: Final      = 0x0080
     CmdWrong: Final             = 0x0100
     NotUndervoltage: Final      = 0x0200  # active low

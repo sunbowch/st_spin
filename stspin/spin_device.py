@@ -1,3 +1,4 @@
+from stspin.constants.command import PayloadSize
 from typing import (
     Callable,
     List,
@@ -15,8 +16,9 @@ from .constants import (
 )
 from .utility import (
     toByteArrayWithLength,
-    toInt,
+    toInt, toSignedInt,
 )
+from stspin import constants
 
 class SpinDevice:
     """Class providing access to a single SPIN device"""
@@ -91,6 +93,17 @@ class SpinDevice:
         return self._writeMultiple(
             toByteArrayWithLength(payload, payload_size)
         )
+        
+    def _toAbsAndDir(self,signedvalue: int) -> int:
+        """Converts a signed integer value (position or speed) to absolute value + corresponding direction
+        """
+        
+        if signedvalue<0:
+            self._direction = Constant.DirReverse
+            signedvalue *= -1
+        else:
+            self._direction = Constant.DirForward    
+        return signedvalue
 
     def setRegister(self, register: int, value: int) -> None:
         """Set the specified register to the given value
@@ -120,9 +133,10 @@ class SpinDevice:
         :steps: Number of (micro)steps to take
 
         """
-        assert steps >= 0
+        assert steps >= -Constant.MaxSteps
         assert steps <= Constant.MaxSteps
-
+        
+        steps = self._toAbsAndDir(steps) 
         PayloadSize = Command.getPayloadSize(Command.Move)
 
         self._writeCommand(Command.Move | self._direction, steps, PayloadSize)
@@ -130,18 +144,102 @@ class SpinDevice:
     def run(self, steps_per_second: float) -> None:
         """Run the motor at the given steps per second
 
-        :steps_per_second: Full steps per second up to 15625.
+        :steps_per_second: Full steps per second from -15625 up to 15625.
         0.015 step/s resolution
 
         """
-        assert steps_per_second >= 0
+        assert steps_per_second >= -Constant.MaxStepsPerSecond
         assert steps_per_second <= Constant.MaxStepsPerSecond
-
+        
         speed = int(steps_per_second * Constant.SpsToSpeed)
+        speed = self._toAbsAndDir(speed)
         PayloadSize = Command.getPayloadSize(Command.Run)
 
         self._writeCommand(Command.Run | self._direction, speed, PayloadSize)
+        
+    def gotoDir(self, direction: int, position: int) -> None:
+        """Go to absolute position in a specified direction
+        :direction is Constant.DirReverse or Constant.DirForward (0 or 1)
+        :position is absolute position in (micro)steps.
+        """
+        assert direction >= 0
+        assert direction < Constant.DirMax
+        assert position < 1<<22
+        assert position > -(1<<22)
+        
+        self._direction=direction
 
+        PayloadSize = Command.getPayloadSize(Command.GoToDir)
+        self._writeCommand(Command.GoToDir | self._direction, position, PayloadSize)
+        
+    def goto(self,position: int) -> None:
+        """Go to absolute position using the shortest way and at maximum speed
+        """
+        assert position < 1<<22
+        assert position > -(1<<22)
+        
+        PayloadSize = Command.getPayloadSize(Command.GoTo)
+        self._writeCommand(Command.GoTo |  position, PayloadSize)
+        
+    def goUntil(self, action: int, steps_per_second: float) -> None:
+        """Go at the givien speed until the switch triggers.
+        action: Constant.ActResetPos reset the absolute position to 0
+                Constant.ActSetMark sets the MARK register to the current position
+        """
+        assert action >= 0
+        assert action < 2
+        assert steps_per_second > -Constant.MaxStepsPerSecond
+        assert steps_per_second < Constant.MaxStepsPerSecond
+        
+        speed = int(steps_per_second * Constant.SpsToSpeed)
+        speed = self._toAbsAndDir(speed)
+        PayloadSize = Command.getPayloadSize(Command.GoUntil)
+        
+        self._writeCommand(Command.GoUntil | action, self.direction, speed, PayloadSize)
+
+    def releaseSw(self, action: int, steps_per_second: float) ->None:
+        """Move the motor at the given speed until the switch is released
+        """
+        assert action >= 0
+        assert action < 2
+        assert steps_per_second != 0
+        
+        speed = int(steps_per_second * Constant.SpsToSpeed)
+        speed = self._toAbsAndDir(speed)
+        oldMinSpd = self.getRegister(Register.SpeedMin)
+        self.setRegister(Register.SpeedMin,speed)
+        PayloadSize = Command.getPayloadSize(Command.ReleaseSw)
+        
+        self._writeCommand(Command.ReleaseSw | action, self.direction, PayloadSize)
+        self.setRegister(Register.SpeedMin,oldMinSpd)
+        
+    def setEndStopAndCenter(self, steps_per_second:float) ->None:
+        """For a motor acting on a linear rail with 2 endstops, set the
+        ABS_POS position at the minimum displacement value and the MARK position
+        at the other end and go to the center.
+        Only if the motor runs less than 2^21 steps end to end. (2097152 steps)
+        Endstops must be connected NC and wired in serie.
+        """
+        assert steps_per_second > 0
+        assert steps_per_second < Constant.MaxStepsPerSecond
+        
+        self.goUntil(Constant.ActResetPos,-steps_per_second)
+        while self.isBusy():
+            pass
+        self.releaseSw(Constant.ActResetPos,steps_per_second/20)
+        while self.isBusy():
+            pass
+        self.goUntil(Constant.ActSetMark, steps_per_second)
+        while self.isBusy():
+            pass
+        self.releaseSw(Constant.ActSetMark,-steps_per_second/20)
+        while self.isBusy():
+            pass
+        self.gotoDir(Constant.DirReverse,self.getMark()/2)
+        while self.getSpeed() < 0:
+            pass
+        print("position reset completed")
+             
     def setDirection(self, direction: int) -> None:
         """Set motor direction. Does not affect active movement
 
@@ -176,6 +274,47 @@ class SpinDevice:
 
         """
         self._writeCommand(Command.StopSoft)
+        
+    def getPosition(self) -> int:
+        """Returns signed absolute position from register value
+        
+        """   
+        rawdata = self.getRegister(Register.PosAbs)
+        
+        return toSignedInt(rawdata)
+    
+    def setPosition(self, position: int) -> None:
+        """set position register to arbitrary value
+        
+        """
+        assert position < 1<<22
+        assert position > -1<<22
+        
+        self.setRegister(Register.PosAbs,position)
+        
+    def getMark(self) -> int:
+        """Return Mark position
+        
+        """
+        rawdata = self.getRegister(Register.Mark)
+        return toSignedInt(rawdata)
+
+    def setMark(self, position:int) -> None:
+        """set MARK register to arbitrary value
+        """
+        assert position < 1<<22
+        assert position > -1<<22
+        
+        self.setRegister(Register.Mark,position)
+        
+    def getSpeed(self) ->float:
+        """Returns signed speed in steps / seconds
+        """
+        stepsPerTick=self.getRegister(Register.Speed)
+        dir=self.getDir()
+        if ~dir:
+            stepsPerTick*=-1
+        return stepsPerTick/Constant.SpsToSpeed
 
     def getStatus(self) -> int:
         """Get status register
@@ -197,3 +336,11 @@ class SpinDevice:
         status = self.getRegister(Register.Status)
 
         return False if (status & Status.NotBusy) else True
+    
+    def getDir(self) -> bool:
+        """Get the direction flag
+        :returns: True if direction is forward False if reverse
+        """
+        status = self.getRegister(Register.Status)
+        
+        return True if (status & Status.Dir) else False

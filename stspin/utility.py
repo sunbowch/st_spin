@@ -83,6 +83,15 @@ def toInt(byte_array: List[int]) -> int:
 
     return result
 
+def toSignedInt(bytenum: int) -> int:
+    """Convert 22 bits integer to 21 bits signed values
+    useful for negative positions and marks
+    """
+    if bytenum>>21:
+        bytenum -= 1<<22
+    
+    return bytenum
+
 def getPrettyStatus(status: int) -> str:
     """Return a str representing the status
 
