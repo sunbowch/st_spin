@@ -66,8 +66,8 @@ while motorMain.isBusy():
 # }}}
 
 # {{{ Head back
-motorMain.setDirection(StConstant.DirReverse)
-motorMain.move(steps=420000)
+
+motorMain.move(steps=-420000)
 while motorMain.isBusy():
     time.sleep(0.2)
 # }}}
