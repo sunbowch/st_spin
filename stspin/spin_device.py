@@ -264,17 +264,6 @@ class SpinDevice:
             pass
         print("position reset completed")
              
-    """def setDirection(self, direction: int) -> None:
-        """Set motor direction. Does not affect active movement
-
-        :direction: Direction as declared in Constant
-
-        """
-        assert direction >= 0
-        assert direction < Constant.DirMax
-
-        self._direction = direction
-    """
     def hiZHard(self) -> None:
         """Stop motors abruptly, release holding current
 

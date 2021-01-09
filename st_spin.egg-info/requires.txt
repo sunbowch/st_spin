@@ -1,0 +1,4 @@
+typing_extensions
+
+[spidev]
+spidev==3.4

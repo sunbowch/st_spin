@@ -85,3 +85,36 @@ class SpinChain:
             self._total_devices,
             self._spi_transfer,
         )
+        
+    def _pllwrite(self,data:List[int]):
+        """Write a single byte to all devices in the chain
+        :data: list of bytes to send
+        :return: response list 
+        """
+        response=[]
+
+        if len(data) != self._total_devices:
+            pass
+        buffer = data
+        response = self._spi_transfer(buffer)
+
+        return response
+
+    def runCommands(self, data:List[List[int]]):
+        """Write some bytes to all devices
+        :data: List containing list of byte indexed by postiton in the chain
+            MSB coming first.
+        :return: List of responses, MSB first
+        """        
+        responses = [[]]
+        data_byte =[]
+
+        if len(data[0]) != self._total_devices:
+            pass
+
+        for spindev in data:
+
+            for data_byte in spindev:
+                responses.append(self._pllwrite(data_byte))
+
+        return responses
