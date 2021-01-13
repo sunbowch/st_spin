@@ -92,6 +92,26 @@ def toSignedInt(bytenum: int) -> int:
     
     return bytenum
 
+def transpose(data):
+    """
+    """
+    tdata = [[data[j][i] for j in range(len(data))] for i in range(len(data[0]))]
+    
+    return tdata
+
+def toAbsAndDir(self,signedvalue: int) -> int:
+    """Converts a signed integer value (position or speed) to absolute value + corresponding direction
+    
+    signedvalue: signed integer (speed or position)
+    """
+    
+    if signedvalue<0:
+        self._direction = Constant.DirReverse
+        signedvalue *= -1
+    else:
+        self._direction = Constant.DirForward    
+    return signedvalue
+
 def getPrettyStatus(status: int) -> str:
     """Return a str representing the status
 
