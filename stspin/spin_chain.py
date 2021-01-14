@@ -104,8 +104,7 @@ class SpinChain:
         
         self.commands = [Command.Nop] * self._total_devices
         self.datasize = [0] * self._total_devices
-        self.maxcommandslen = 1
-                      
+                       
     def addCommand(self, data) -> None:
         """
         """
@@ -118,10 +117,7 @@ class SpinChain:
         if len(data) > 2:
                     
             self.commands[position].append(data[i] for i in range(2,len(data)))
-            
-            if self.maxcommandslen < len(data):
-                self.maxcommandslen = len(data)
-                   
+                              
     def _pllwrite(self,data:List[int]):
         """Write a single byte to all devices in the chain
         :data: list of bytes to send
