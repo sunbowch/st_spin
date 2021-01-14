@@ -16,7 +16,7 @@ from .constants import (
 )
 from .utility import (
     toByteArrayWithLength,
-    toInt, toSignedInt, toAbsAndDir
+    toInt, toSignedInt
 )
 from stspin import constants
 
@@ -81,15 +81,20 @@ class SpinDevice:
         :return: Response bytes as int
         """
         
-        cmdtosend = [self._position, command]
+        assert (payload is None) == (payload_size is None), \
+            'payload and payload_size must be either both None, xor present'
 
-        if payload is None and payload_size is None:
-            
-            return cmdtosend
+        response = self._write(command)
 
-        cmdtosend.append(i for i in toByteArrayWithLength(payload,payload_size))
-        
-        return cmdtosend
+        # payload_size does not need to be checked here,
+        # but mypy is not quite that advanced yet
+        if payload is None or payload_size is None:
+            return response
+
+        return self._writeMultiple(
+            toByteArrayWithLength(payload, payload_size)
+        )
+
         
     def setRegister(self, register: int, value: int) -> None:
         """Set the specified register to the given value
@@ -100,7 +105,9 @@ class SpinDevice:
         RegisterSize = Register.getSize(register)
         set_command = Command.ParamSet | register
 
-        self._writeCommand(set_command, value, RegisterSize)
+        self._writeCommand(Command.ParamGet | register)
+
+        return self._writeMultiple([Command.Nop] * RegisterSize)
 
     def getRegister(self, register: int) -> int:
         """Fetches a register's contents and returns the current value
@@ -110,7 +117,9 @@ class SpinDevice:
         """
         
         RegisterSize = Register.getSize(register)
-        self._writeCommand(Command.ParamGet | register, Command.Nop, RegisterSize)
+        self._writeCommand(Command.ParamGet | register)
+
+        return self._writeMultiple([Command.Nop] * RegisterSize)
 
     def move(self, steps: int) -> None:
         """Move motor n steps
@@ -158,7 +167,7 @@ class SpinDevice:
         PayloadSize = Command.getPayloadSize(Command.GoToDir)
         self._writeCommand(Command.GoToDir | self._direction, position, PayloadSize)
         
-    def goto(self,position: int) -> None:
+    def goto(self,position: int,steps_per_second: float) -> None:
         """Go to absolute position using the shortest way and at the given speed
         
         :position: absolute position in (micro)steps
@@ -167,11 +176,17 @@ class SpinDevice:
         """
         assert position < 1<<22
         assert position > -(1<<22)
-
+        assert steps_per_second > 0
+        assert steps_per_second <= Constant.MaxStepsPerSecond
+        
+        speed = int(steps_per_second * Constant.SpsToSpeed)
+        oldMaxSpd = self.getRegister(Register.SpeedMin)
+        self.setRegister(Register.SpeedMax,speed)
         PayloadSize = Command.getPayloadSize(Command.GoTo)
         
-        self._writeCommand(Command.GoTo, position, PayloadSize)
-       
+        self._writeCommand(Command.GoTo |  position, PayloadSize)
+        self.setRegister(Register.SpeedMax,oldMaxSpd)
+
     def goUntil(self, action: int, steps_per_second: float) -> None:
         """Go at the givien speed until the switch triggers.
         
@@ -183,26 +198,38 @@ class SpinDevice:
         
         assert steps_per_second > -Constant.MaxStepsPerSecond
         assert steps_per_second < Constant.MaxStepsPerSecond
+        assert action >= 0
+        assert action < 2
+        assert steps_per_second > -Constant.MaxStepsPerSecond
+        assert steps_per_second < Constant.MaxStepsPerSecond
         
         speed = int(steps_per_second * Constant.SpsToSpeed)
         speed = self._toAbsAndDir(speed)
         PayloadSize = Command.getPayloadSize(Command.GoUntil)
         
-        self._writeCommand(Command.GoUntil | action | self._direction, speed, PayloadSize)
+        self._writeCommand(Command.GoUntil | action, self.direction, speed, PayloadSize)
 
-    def releaseSw(self, action: int) ->None:
+    def releaseSw(self, action: int, steps_per_second: float) ->None:
         """Move the motor at the given speed until the switch is released
         
         :steps_per_second: Full steps per second from -15625 up to 15625.
         0.015 step/s resolution
         """
-      
+        assert action >= 0
+        assert action < 2
+        assert steps_per_second != 0
+        
+        speed = int(steps_per_second * Constant.SpsToSpeed)
+        speed = self._toAbsAndDir(speed)
+        oldMinSpd = self.getRegister(Register.SpeedMin)
+        self.setRegister(Register.SpeedMin,speed)
         PayloadSize = Command.getPayloadSize(Command.ReleaseSw)
         
-        self._writeCommand(Command.ReleaseSw | action | self._direction, PayloadSize)
-        
-    """def setEndStopAndCenter(self, steps_per_second:float) ->None:
-        For a motor acting on a linear rail with 2 endstops, set the
+        self._writeCommand(Command.ReleaseSw | action, self.direction, PayloadSize)
+        self.setRegister(Register.SpeedMin,oldMinSpd)
+                
+    def setEndStopAndCenter(self, steps_per_second:float) ->None:
+        """For a motor acting on a linear rail with 2 endstops, set the
         ABS_POS position at the minimum displacement value and the MARK position
         at the other end and go to the center.
         Only if the motor runs less than 2^21 steps end to end. (2097152 steps)
@@ -210,6 +237,7 @@ class SpinDevice:
         
         :steps_per_second: Full steps per second from 0 up to 15625.
         0.015 step/s resolution
+        """
         
         assert steps_per_second > 0
         assert steps_per_second < Constant.MaxStepsPerSecond
@@ -230,7 +258,7 @@ class SpinDevice:
         while self.getSpeed() < 0:
             pass
         print("position reset completed")
-    """
+    
              
     def hiZHard(self) -> None:
         """Stop motors abruptly, release holding current
@@ -256,12 +284,14 @@ class SpinDevice:
         """
         self._writeCommand(Command.StopSoft)
         
-    def askPosition(self) -> None:
+    def getPosition(self) -> int:
         """Returns signed absolute position from register value
         
         :return: absolute position in (micro)steps
         """   
-        self.getRegister(Register.PosAbs)
+        rawdata = self.getRegister(Register.PosAbs)
+        
+        return toSignedInt(rawdata)
             
     def setPosition(self, position: int) -> None:
         """Set position register to arbitrary value
@@ -273,12 +303,13 @@ class SpinDevice:
         
         self.setRegister(Register.PosAbs,position)
         
-    def askMark(self) -> None:
+    def getMark(self) -> int:
         """Return Mark position
         
         :return: absolute position in (micro)steps
         """
-        self.getRegister(Register.Mark)
+        rawdata = self.getRegister(Register.Mark)
+        return toSignedInt(rawdata)
 
     def setMark(self, position:int) -> None:
         """set MARK register to arbitrary value
@@ -290,25 +321,46 @@ class SpinDevice:
         
         self.setRegister(Register.Mark,position)
         
-    def askSpeed(self) -> None:
+    def getSpeed(self) ->float:
         """Get actual speed
         :return: signed speed in fullsteps / seconds
         """
-        self.getRegister(Register.Speed)
-        
-    def getStatus(self) -> None:
+        stepsPerTick=self.getRegister(Register.Speed)
+        dir=self.getDir()
+        if ~dir:
+            stepsPerTick*=-1
+        return stepsPerTick/Constant.SpsToSpeed
+
+    def getStatus(self) -> int:
         """Get status register
         Resets alarm flags. Does not reset HiZ
         
         :returns: 2 bytes status as an int
         """
         self._writeCommand(Command.StatusGet)
-    
-    def getResponse(self, responses):
+
+        return self._writeMultiple([Command.Nop] * 2)
+
+    def isBusy(self) -> bool:
+        """Checks busy status of the device
+        
+        :returns: True if device is busy, else False
         """
-        """
-        return responses[self._position]
+        # We use getRegister instead of getStatus
+        # So as not to clear any warning flags
+        status = self.getRegister(Register.Status)
+
+        return False if (status & Status.NotBusy) else True
     
+    def getDir(self) -> bool:
+        """Get the direction flag
+        
+        :returns: True if direction is forward False if reverse (1 or 0)
+        """
+        status = self.getRegister(Register.Status)
+        
+        return True if (status & Status.Dir) else False
+
     def _toAbsAndDir(self,signedvalue: int) -> int:
         """Converts a signed integer value (position or speed) to absolute value + corresponding direction
         

@@ -1,7 +1,7 @@
 from stspin.constants.register import RegisterSize
 from stspin.constants.constant import Constant
 from stspin.constants.command import Command
-from stspin.utility import toByteArray, toByteArrayWithLength, toInt, toPlusAndDir, transpose
+from stspin.utility import toByteArray, toByteArrayWithLength, toInt, toPlusAndDir, toSignedInt, transpose
 from typing import (
     Callable,
     List,
@@ -11,6 +11,7 @@ from typing import (
 from typing_extensions import (
     Final,
 )
+from itertools import zip_longest
 
 from . import SpinDevice, Register
 
@@ -62,10 +63,7 @@ class SpinChain:
             self._spi_transfer = self._spi.xfer2
         # }}}
         
-        self.datasize = [0] * self._total_devices
-        self.commands = [] * self._total_devices
-        self.responses = [] * self._total_devices
-        self.maxcommandslen = 1
+        self._resetCommands()
 
     def create(self, position: int) -> SpinDevice:
         """
@@ -104,20 +102,10 @@ class SpinChain:
             pass
         else: del self.commands
         
-        self.commands = [0x00] * self._total_devices
+        self.commands = [Command.Nop] * self._total_devices
         self.datasize = [0] * self._total_devices
-                
-    def _completeCommands(self):
-        """
-        """
-        
-        for i in range (self._total_devices):
-            n = self.maxcommandslen - len(self.commands[i])
-            if n > 0:
-                self.commands[i].append([0x00] * n)
-           
-        return transpose(self.commands)       
-        
+        self.maxcommandslen = 1
+                      
     def addCommand(self, data) -> None:
         """
         """
@@ -166,22 +154,23 @@ class SpinChain:
             MSB coming first.
         :return: List of responses, MSB first
         """        
-        responses = [[]]
+        responses = []
         data_byte =[]
         
-        datat = self._completeCommands(data)
+        datat = list(zip_longest(cmd for cmd in data, fillvalue = Command.Nop))
         
         if len(datat[0]) != self._total_devices:
             pass
 
-        for spindev in datat:
+        for i in self._total_devices:
 
-            for data_byte in spindev:
-                responses.append(self._pllwrite(data_byte))
-                
+            for data_byte in datat[i]:
+                responses[i].append(self._pllwrite(data_byte))
+        
+        size = self.datasize
         self._resetCommands()
         
-        return self._getResponses(transpose(responses),self.datasize)
+        return self._getResponses(list(zip(row for row in responses)),size)
     
     def allSoftStop(self):
         """
@@ -219,6 +208,7 @@ class SpinChain:
         """
         
         RegisterSize = Register.getSize(register)
+        self.datasize = [RegisterSize] * self._total_devices
         
         command = [Command.ParamGet | register, Command.Nop * RegisterSize] * self._total_devices 
         
@@ -227,17 +217,30 @@ class SpinChain:
     def allGetPosition(self):
         """
         """
-        return self.allgetRegister(Register.PosAbs)
+        data = []
+        rawdata = self.allgetRegister(Register.PosAbs)
+        
+        for i in rawdata:
+            data.append(toSignedInt(i))
+        
+        return data
     
     def allGetSpeed(self):
         """
         """
-        return self.allgetRegister(Register.Speed)
+        data = []
+        
+        rawdata = self.allgetRegister(Register.Speed)
+        
+        for i in rawdata:
+            data.append(i/Constant.SpsToSpeed)
+            
+        return data
     
     def allRun(self,speeds):
         """
         """
-        command = [] * self._total_devices
+        command = [] 
                 
         for s in speeds:
             ints = int(Constant.SpsToSpeed *s)
