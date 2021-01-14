@@ -121,7 +121,7 @@ class SpinDevice:
         assert steps >= -Constant.MaxSteps
         assert steps <= Constant.MaxSteps
         
-        steps = toAbsAndDir(steps) 
+        steps = self._toAbsAndDir(steps) 
         PayloadSize = Command.getPayloadSize(Command.Move)
 
         self._writeCommand(Command.Move | self._direction, steps, PayloadSize)
@@ -137,7 +137,7 @@ class SpinDevice:
         assert steps_per_second <= Constant.MaxStepsPerSecond
         
         speed = int(steps_per_second * Constant.SpsToSpeed)
-        speed = toAbsAndDir(speed)
+        speed = self._toAbsAndDir(speed)
         PayloadSize = Command.getPayloadSize(Command.Run)
 
         self._writeCommand(Command.Run | self._direction, speed, PayloadSize)
@@ -201,8 +201,8 @@ class SpinDevice:
         
         self._writeCommand(Command.ReleaseSw | action | self._direction, PayloadSize)
         
-    def setEndStopAndCenter(self, steps_per_second:float) ->None:
-        """For a motor acting on a linear rail with 2 endstops, set the
+    """def setEndStopAndCenter(self, steps_per_second:float) ->None:
+        For a motor acting on a linear rail with 2 endstops, set the
         ABS_POS position at the minimum displacement value and the MARK position
         at the other end and go to the center.
         Only if the motor runs less than 2^21 steps end to end. (2097152 steps)
@@ -210,7 +210,7 @@ class SpinDevice:
         
         :steps_per_second: Full steps per second from 0 up to 15625.
         0.015 step/s resolution
-        """
+        
         assert steps_per_second > 0
         assert steps_per_second < Constant.MaxStepsPerSecond
         
@@ -230,6 +230,7 @@ class SpinDevice:
         while self.getSpeed() < 0:
             pass
         print("position reset completed")
+    """
              
     def hiZHard(self) -> None:
         """Stop motors abruptly, release holding current
@@ -302,3 +303,21 @@ class SpinDevice:
         :returns: 2 bytes status as an int
         """
         self._writeCommand(Command.StatusGet)
+    
+    def getResponse(self, responses):
+        """
+        """
+        return responses[self._position]
+    
+    def _toAbsAndDir(self,signedvalue: int) -> int:
+        """Converts a signed integer value (position or speed) to absolute value + corresponding direction
+        
+        signedvalue: signed integer (speed or position)
+        """
+        
+        if signedvalue<0:
+            self._direction = Constant.DirReverse
+            signedvalue *= -1
+        else:
+            self._direction = Constant.DirForward    
+        return signedvalue

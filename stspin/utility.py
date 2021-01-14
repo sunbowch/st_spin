@@ -99,18 +99,19 @@ def transpose(data):
     
     return tdata
 
-def toAbsAndDir(self,signedvalue: int) -> int:
+def toPlusAndDir(self,signedvalue: int) -> int:
     """Converts a signed integer value (position or speed) to absolute value + corresponding direction
     
     signedvalue: signed integer (speed or position)
     """
     
     if signedvalue<0:
-        self._direction = Constant.DirReverse
+        direction = Constant.DirReverse
         signedvalue *= -1
     else:
-        self._direction = Constant.DirForward    
-    return signedvalue
+        direction = Constant.DirForward  
+          
+    return [direction, signedvalue]
 
 def getPrettyStatus(status: int) -> str:
     """Return a str representing the status

@@ -1,4 +1,7 @@
-from stspin.utility import toByteArray, toByteArrayWithLength, toInt, transpose
+from stspin.constants.register import RegisterSize
+from stspin.constants.constant import Constant
+from stspin.constants.command import Command
+from stspin.utility import toByteArray, toByteArrayWithLength, toInt, toPlusAndDir, transpose
 from typing import (
     Callable,
     List,
@@ -9,7 +12,7 @@ from typing_extensions import (
     Final,
 )
 
-from . import SpinDevice
+from . import SpinDevice, Register
 
 class SpinChain:
     """Class for constructing a chain of SPIN devices"""
@@ -60,8 +63,8 @@ class SpinChain:
         # }}}
         
         self.datasize = [0] * self._total_devices
-        self.commands = []*self._total_devices
-        self.responses = []*self._total_devices
+        self.commands = [] * self._total_devices
+        self.responses = [] * self._total_devices
         self.maxcommandslen = 1
 
     def create(self, position: int) -> SpinDevice:
@@ -93,7 +96,7 @@ class SpinChain:
             self._spi_transfer,
         )
         
-    def _resetCommands(self, datalength):
+    def _resetCommands(self):
         """
         """
         try: self.commands
@@ -175,6 +178,73 @@ class SpinChain:
 
             for data_byte in spindev:
                 responses.append(self._pllwrite(data_byte))
+                
+        self._resetCommands()
         
         return self._getResponses(transpose(responses),self.datasize)
     
+    def allSoftStop(self):
+        """
+        """
+        command = [Command.StopSoft] * self._total_devices
+        
+        self.runCommands(command)
+        
+    def allHardStop(self):
+        """
+        """
+        command = [Command.StopHard] * self._total_devices
+        
+        self.runCommands(command)
+
+    def allHiZSoft(self):
+        """
+        """
+        command = [Command.HiZSoft] * self._total_devices
+        
+        self.runCommands(command)
+        
+    def allHiZHard(self):
+        """
+        """
+        command = [Command.HiZHard] * self._total_devices
+        
+        self.runCommands(command)
+        
+    def allgetRegister(self, register: int) -> int:
+        """Fetches a register's contents and returns the current value
+
+        :register: Register location to be accessed
+        :returns: Value of specified register
+        """
+        
+        RegisterSize = Register.getSize(register)
+        
+        command = [Command.ParamGet | register, Command.Nop * RegisterSize] * self._total_devices 
+        
+        return self.runCommands[command]
+        
+    def allGetPosition(self):
+        """
+        """
+        return self.allgetRegister(Register.PosAbs)
+    
+    def allGetSpeed(self):
+        """
+        """
+        return self.allgetRegister(Register.Speed)
+    
+    def allRun(self,speeds):
+        """
+        """
+        command = [] * self._total_devices
+                
+        for s in speeds:
+            ints = int(Constant.SpsToSpeed *s)
+            ds = toPlusAndDir(ints)
+            direction = ds[0]
+            absspeed = toByteArrayWithLength(ds[1], RegisterSize(Register.Speed)) 
+            command.append([Command.Run | direction, b for b in absspeed]) 
+        
+        self.runCommands(command)
+        
