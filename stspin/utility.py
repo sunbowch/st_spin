@@ -95,11 +95,15 @@ def toSignedInt(bytenum: int) -> int:
 def transpose(data):
     """
     """
-    tdata = [[data[j][i] for j in range(len(data))] for i in range(len(data[0]))]
+    if isinstance(data[0],int):
+        return [data]
+
+    else:
+        tdata = [[data[j][i] for j in range(len(data))] for i in range(len(data[0]))]
     
     return tdata
 
-def toPlusAndDir(self,signedvalue: int) -> int:
+def toPlusAndDir(signedvalue: int) -> int:
     """Converts a signed integer value (position or speed) to absolute value + corresponding direction
     
     signedvalue: signed integer (speed or position)
@@ -110,8 +114,10 @@ def toPlusAndDir(self,signedvalue: int) -> int:
         signedvalue *= -1
     else:
         direction = Constant.DirForward  
+    
+    result = [direction, signedvalue]
           
-    return [direction, signedvalue]
+    return result
 
 def getPrettyStatus(status: int) -> str:
     """Return a str representing the status

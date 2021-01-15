@@ -95,7 +95,6 @@ class SpinDevice:
             toByteArrayWithLength(payload, payload_size)
         )
 
-        
     def setRegister(self, register: int, value: int) -> None:
         """Set the specified register to the given value
         
@@ -105,9 +104,7 @@ class SpinDevice:
         RegisterSize = Register.getSize(register)
         set_command = Command.ParamSet | register
 
-        self._writeCommand(Command.ParamGet | register)
-
-        return self._writeMultiple([Command.Nop] * RegisterSize)
+        self._writeCommand(set_command, value, RegisterSize)
 
     def getRegister(self, register: int) -> int:
         """Fetches a register's contents and returns the current value
@@ -167,7 +164,7 @@ class SpinDevice:
         PayloadSize = Command.getPayloadSize(Command.GoToDir)
         self._writeCommand(Command.GoToDir | self._direction, position, PayloadSize)
         
-    def goto(self,position: int,steps_per_second: float) -> None:
+    def goto(self,position: int, steps_per_second: float) -> None:
         """Go to absolute position using the shortest way and at the given speed
         
         :position: absolute position in (micro)steps
@@ -258,8 +255,7 @@ class SpinDevice:
         while self.getSpeed() < 0:
             pass
         print("position reset completed")
-    
-             
+              
     def hiZHard(self) -> None:
         """Stop motors abruptly, release holding current
 

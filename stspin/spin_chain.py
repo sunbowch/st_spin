@@ -1,6 +1,9 @@
-from stspin.constants.register import RegisterSize
-from stspin.constants.constant import Constant
-from stspin.constants.command import Command
+from .constants import (
+    Command,
+    Constant,
+    Register,
+    Status,
+)
 from stspin.utility import toByteArray, toByteArrayWithLength, toInt, toPlusAndDir, toSignedInt, transpose
 from typing import (
     Callable,
@@ -13,7 +16,7 @@ from typing_extensions import (
 )
 from itertools import zip_longest
 
-from . import SpinDevice, Register
+from stspin.spin_device import SpinDevice
 
 class SpinChain:
     """Class for constructing a chain of SPIN devices"""
@@ -41,6 +44,8 @@ class SpinChain:
             'Either supply a SPI transfer function or use spidev\'s'
 
         self._total_devices: Final = total_devices
+        self.commands = [Command.Nop] * self._total_devices
+        self.datasize = [0] * self._total_devices
 
         # {{{ SPI setup
         if spi_transfer is not None:
@@ -62,8 +67,6 @@ class SpinChain:
 
             self._spi_transfer = self._spi.xfer2
         # }}}
-        
-        self._resetCommands()
 
     def create(self, position: int) -> SpinDevice:
         """
@@ -104,7 +107,26 @@ class SpinChain:
         
         self.commands = [Command.Nop] * self._total_devices
         self.datasize = [0] * self._total_devices
-                       
+
+    def _completeCommands(self,data):
+        """
+        """
+        maxlen = 1
+
+        for cmd in data:
+            if not(isinstance(cmd,int)):
+                maxlen = max(len(cmd), maxlen)
+        if maxlen >1:
+            for i in range (self._total_devices):
+                if (isinstance(data[i],int)):
+                    n = maxlen - 1
+                else:
+                    n = maxlen - len(data[i])
+                if n > 0:
+                    data[i].append([0x00] * n)
+           
+        return transpose(data)       
+                               
     def addCommand(self, data) -> None:
         """
         """
@@ -115,8 +137,8 @@ class SpinChain:
         self.datasize[position] = len(data)-2
         
         if len(data) > 2:
-                    
-            self.commands[position].append(data[i] for i in range(2,len(data)))
+            for i in range(2,len(data)):        
+                self.commands[position].append(data[i])
                               
     def _pllwrite(self,data:List[int]):
         """Write a single byte to all devices in the chain
@@ -132,15 +154,15 @@ class SpinChain:
     def _getResponses(self,data,datalenght):
         """
         """
-        response = []*self._total_devices
+        response = [0]*self._total_devices
         
-        for i in self._total_devices:
+        for i in range(self._total_devices):
             
             if datalenght[i] == 0:
                 response[i] = None
             
             else:
-                response[i] = toInt(data[0:datalenght[i]])
+                response[i] = toInt(data[i][1:datalenght[i]+1])
                 
         return response
                             
@@ -150,23 +172,23 @@ class SpinChain:
             MSB coming first.
         :return: List of responses, MSB first
         """        
-        responses = []
-        data_byte =[]
         
-        datat = list(zip_longest(cmd for cmd in data, fillvalue = Command.Nop))
+        data_byte =[]
+        responses = []
+
+        datat = self._completeCommands(data)
         
         if len(datat[0]) != self._total_devices:
             pass
 
-        for i in self._total_devices:
-
-            for data_byte in datat[i]:
-                responses[i].append(self._pllwrite(data_byte))
+        for data_byte in datat:
+            responses.append(self._pllwrite(data_byte))
         
         size = self.datasize
         self._resetCommands()
+        rdata=self._getResponses(transpose(responses),size)
         
-        return self._getResponses(list(zip(row for row in responses)),size)
+        return rdata
     
     def allSoftStop(self):
         """
@@ -196,54 +218,138 @@ class SpinChain:
         
         self.runCommands(command)
         
-    def allgetRegister(self, register: int) -> int:
+    def allGetRegister(self, register: int) -> int:
         """Fetches a register's contents and returns the current value
 
         :register: Register location to be accessed
         :returns: Value of specified register
         """
-        
+        command = []
         RegisterSize = Register.getSize(register)
         self.datasize = [RegisterSize] * self._total_devices
         
-        command = [Command.ParamGet | register, Command.Nop * RegisterSize] * self._total_devices 
+        command.append(Command.ParamGet | register)
+        i=0
+        for i in range(RegisterSize):
+            command.append(Command.Nop)
+        commands = [command] *self._total_devices
+
+        response=self.runCommands(commands)
         
-        return self.runCommands[command]
+        return response
+
+    def allSetRegister(self, register : int, values: List[int]) -> None:
+        """
+        """
+        set_command = []
+        RegisterSize = Register.getSize(register)
+        cmd = Command.ParamSet | register
+
+        for v in values:
+            cmdline = []
+            tobytes = toByteArrayWithLength(v, RegisterSize)
+            cmdline.append(cmd)
+
+            for i in range(RegisterSize):
+                cmdline.append(tobytes[i])
+            set_command.append(cmdline)
+
+        self.runCommands(set_command)
         
     def allGetPosition(self):
         """
         """
         data = []
-        rawdata = self.allgetRegister(Register.PosAbs)
+        rawdata = self.allGetRegister(Register.PosAbs)
         
         for i in rawdata:
             data.append(toSignedInt(i))
         
         return data
-    
+
+    def allGetMark(self):
+        """
+        """
+        data = []
+        rawdata = self.allGetRegister(Register.Mark)
+        
+        for i in rawdata:
+            data.append(toSignedInt(i))
+        
+        return data
+
+    def allSetPosition(self,positions: List[int]):
+        """
+        """
+        self.allSetRegister(Register.PosAbs,positions)
+
+    def allSetMark(self,positions: List[int]):
+        """
+        """
+        self.allSetRegister(Register.Mark,positions)
+
     def allGetSpeed(self):
         """
         """
         data = []
-        
-        rawdata = self.allgetRegister(Register.Speed)
+
+        rawdata = self.allGetRegister(Register.Speed)
+        dir = self.allGetStatus(Status.Dir)
         
         for i in rawdata:
+            if not dir[i]:   # 0 is negative
+                i = -i
+
             data.append(i/Constant.SpsToSpeed)
             
         return data
-    
+        
+    def allGetStatus(self, statusmask) -> int:
+        """
+        """
+        returndata = []
+
+        stdatas = self.allGetRegister(Register.Status)
+
+        for stdata in stdatas:
+            returndata.append(stdata & statusmask)
+
+        return returndata
+
     def allRun(self,speeds):
+
         """
         """
-        command = [] 
+        command = []
+        ds =[]
+        #self.datasize = [Register.getSize(Register.Speed)]*self._total_devices
                 
         for s in speeds:
             ints = int(Constant.SpsToSpeed *s)
             ds = toPlusAndDir(ints)
-            direction = ds[0]
-            absspeed = toByteArrayWithLength(ds[1], RegisterSize(Register.Speed)) 
-            command.append([Command.Run | direction, b for b in absspeed]) 
+            bytelen = Register.getSize(Register.Speed)
+            commandline = []
+            commandline.append(Command.Run | ds[0])
+            tobytes = toByteArrayWithLength(ds[1], bytelen)
+
+            for i in range(bytelen):
+                commandline.append(tobytes[i])
+
+            command.append(commandline)
         
         self.runCommands(command)
+
+    def isOneBusy(self):
+        """
+        """
+        regvalues = self.allGetStatus(Status.NotBusy)
+          
+        cst = False
+        for regvalue in regvalues:
+            if regvalue == 0 :
+                cst=True
+                break
+
+        return cst
+
         
